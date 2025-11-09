@@ -243,7 +243,27 @@ if __name__ == "__main__":
         # symlink examples into fairseq package so package_data accepts them
         fairseq_examples = os.path.join("fairseq", "examples")
         if "build_ext" not in sys.argv[1:] and not os.path.exists(fairseq_examples):
-            os.symlink(os.path.join("..", "examples"), fairseq_examples)
+            if os.name == 'nt':  # Windows
+                # Use junction or copy instead of symlink on Windows
+                import shutil
+                
+                # Get absolute path to examples directory
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                examples_source = os.path.join(script_dir, "examples")
+                
+                # Verify source exists
+                if not os.path.exists(examples_source):
+                    raise FileNotFoundError(f"Source examples directory not found: {examples_source}")
+                
+                try:
+                    # Try to create junction first (requires admin on older Windows)
+                    subprocess.run(['mklink', '/J', fairseq_examples, examples_source], 
+                                 shell=True, check=True)
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    # Fallback to copying directory
+                    shutil.copytree(examples_source, fairseq_examples)
+            else:
+                os.symlink(os.path.join("..", "examples"), fairseq_examples)
 
         package_data = {
             "fairseq": (
@@ -253,5 +273,20 @@ if __name__ == "__main__":
         }
         do_setup(package_data)
     finally:
-        if "build_ext" not in sys.argv[1:] and os.path.islink(fairseq_examples):
-            os.unlink(fairseq_examples)
+        if "build_ext" not in sys.argv[1:] and os.path.exists(fairseq_examples):
+            if os.name == 'nt':  # Windows
+                import shutil
+                try:
+                    # For junction points and directories, use rmtree
+                    if os.path.isdir(fairseq_examples):
+                        shutil.rmtree(fairseq_examples)
+                except (OSError, PermissionError) as e:
+                    # If deletion fails, try alternative methods
+                    try:
+                        subprocess.run(['rmdir', '/S', '/Q', fairseq_examples], 
+                                     shell=True, check=True)
+                    except subprocess.CalledProcessError:
+                        print(f"Warning: Failed to remove {fairseq_examples}: {e}")
+            else:
+                if os.path.islink(fairseq_examples):
+                    os.unlink(fairseq_examples)
